@@ -1,5 +1,5 @@
 torch
 neuraloperator
-numpy
+numpy<2
 matplotlib
 h5py
