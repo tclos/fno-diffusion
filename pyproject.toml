@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fno-diffusion"
+version = "0.1.0"
+description = "Fourier Neural Operator for 1D diffusion–sorption PDEs"
+authors = [{name = "tclos"}]
+dependencies = [
+    "torch",
+    "neuraloperator",
+    "numpy<2",
+    "matplotlib",
+    "h5py",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
