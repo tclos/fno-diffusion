@@ -1,12 +1,4 @@
-# Fourier Neural Operator for 1D Diffusion–Sorption PDEs
-
-This project implements a **Fourier Neural Operator (FNO)** to learn solution operators of a 1D diffusion–sorption partial differential equation:
-
-```math
-u_t = \nu u_{xx} - \sigma(u)
-```
-
-The model is trained and evaluated using data from **PDEBench**.
+# Fourier Neural Operator for Spectral Wave Diffusion
 
 ---
 
@@ -19,18 +11,22 @@ fno-diffusion/
 │
 ├── fno_diffusion/ # Installable Python package
 │ ├── init.py
+│ ├── snl_physics.py
 │ ├── data_loader.py # PDEBench data loading
 │ ├── model.py # FNO model definition
 │ ├── train.py # Training & validation logic
 │
 ├── data/
 │ ├── download_pdebench.py # PDEBench data downloading
-│ └── ( 1D_diff-sorp_NA_NA.h5 ) # After download
-│
-├── scripts/
-│ └── run_training.py
-└── notebooks/
-  └── train_val_loss_curves.py # Visualization
+│ ├── 1D_diff-sorp_NA_NA.h5 # After download
+│ └── snl/
+│   ├── snl_dataset.py  # Generated dataset
+│   └── inspect_polar_snl.py # Polar visualization & validation
+│ 
+└── scripts/
+  ├── generate_snl_data.py  # Dataset generation (physics-based)
+  └── run_training.py
+  
 ```
 ---
 
@@ -77,22 +73,18 @@ pip install -e .
 ```
 ---
 
-## ⬇️ Dataset Download
+## Dataset Generation
 
-A download script is provided in the `data/` directory to fetch the required `.h5` files automatically. 
+A dataset generation script is provided in the `scripts/` directory to generate the required `.h5` files automatically. 
 
-1. **Execute the download script:**
+1. **Execute the generation script:**
    ```bash
-   python data/download_pdebench.py
+   python scripts/generate_snl_data.py \
+    --n-samples 10000 \
+    --n-omega 64 \
+    --n-theta 64 \
+    --out data/snl/snl_dataset.h5
    ```
-2. **File Placement:**
-  The script will download the data into the data/ folder. Upon completion, verify the directory structure looks like this:
-    ```text
-    data/
-    └── 1D_diff-sorp_NA_NA.h5  # ~4.0 GB
-    ```
-    
-The dataset can also be manually downloaded and placed in the data/ folder
 
 
 ## 🚀 Running
