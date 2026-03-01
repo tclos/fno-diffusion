@@ -1,103 +1,92 @@
 # fno_diffusion/snl_physics.py
+#
+# Motor Físico para geração do termo não-linear S_nl (Modelo DE3)
+# Incorpora estabilidade numérica para o termo w^24 e geração baseada em Hs.
 
 import numpy as np
 
-def jonswap_spectrum(f, Hs, Tp, gamma, g=9.81):
-    fp = 1.0 / Tp
-    omega_p = 2 * np.pi * fp
+_trapz = getattr(np, "trapezoid", None) or np.trapz
+g = 9.81
 
-    sigma = np.where(f <= fp, 0.07, 0.09)
-    r = np.exp(-(f - fp)**2 / (2 * sigma**2 * fp**2))
+
+def generate_jonswap_2d(f, theta, fp=0.4, gamma=3.3, theta0=0.0, s=1, Hs=None, alpha=0.0081, jp_benchmark=False):
+    """
+    Gera o Espectro de Energia 2D E(f, theta) baseado em JONSWAP.
+    Se Hs for fornecido, a energia total é reescalada para bater exatamente com a Altura Significativa.
+    """
+    f_grid, theta_grid = np.meshgrid(f, theta, indexing='ij')
     
-    alpha_J = 0.076 * (Hs**2 * omega_p**4 / g**2)**0.22
-
-    S = (
-        alpha_J
-        * g**2
-        * (2*np.pi)**-4
-        * f**-5
-        * np.exp(-5/4 * (fp/f)**4)
-        * gamma**r
-    )
-
-    return S
-
-def directional_spreading(theta, theta0=0.0, s=20):
-    delta_theta = (theta - theta0 + np.pi) % (2 * np.pi) - np.pi
-    D = np.power(np.cos(0.5 * delta_theta), 2 * s)
-    integral = np.trapz(D, theta)
+    # JONSWAP base
+    sigma_j = np.where(f_grid <= fp, 0.07, 0.09)
+    PM = alpha * g**2 * (2.0*np.pi)**(-4) * f_grid**(-5) * np.exp(-1.25 * (fp/f_grid)**4)
+    J = PM * gamma**(np.exp(-0.5 * ((f_grid - fp) / (sigma_j * fp))**2))
     
-    return D / integral
-
-
-def generate_action_spectrum(omega, theta):
-    Hs = np.random.uniform(1.0, 6.0)
-    Tp = np.random.uniform(7.0, 15.0)
-    gamma = np.random.uniform(1.0, 5.0)
-
-    f = omega / (2*np.pi)
-
-    S_f = jonswap_spectrum(f, Hs, Tp, gamma)
-    S_w = S_f / (2*np.pi)
-
-    D_theta = directional_spreading(theta)
-
-    E = np.outer(S_w, D_theta)
-    n = E / omega[:, None]
-
-    n[n < 0] = 0.0
-    return n, Tp
-
-
-def angular_mean(n, theta):
-    return np.trapz(n, theta, axis=1) / (2*np.pi)
-
-
-def compute_psi(n, omega, theta, Tp):
-    omega_p = 2*np.pi / Tp
-    n_bar = angular_mean(n, theta)
-
-    psi = ((omega[:, None] / omega_p)**24 * (n_bar[:, None]**2) * n)
-
-    return psi
-
-def laplacian_operator(psi, omega, theta):
-    dtheta = theta[1] - theta[0]
+    if jp_benchmark:
+        # Espalhamento direcional do Benchmark J&P: (2/pi) cos^2(theta) para |theta| <= pi/2
+        delta = (theta_grid - theta0 + np.pi) % (2*np.pi) - np.pi
+        mask = np.abs(delta) <= np.pi/2.0
+        D_theta = np.where(mask, (2.0 / np.pi) * np.cos(delta)**2, 0.0)
+    else:
+        # Espalhamento direcional genérico: cos^{2s}((theta-theta0)/2)
+        delta = (theta_grid - theta0 + np.pi) % (2*np.pi) - np.pi
+        D_unnorm = np.maximum(np.cos(delta / 2.0), 0.0)**(2*s)
+        norm = _trapz(D_unnorm[0, :], theta)
+        D_theta = D_unnorm / norm if norm > 0 else np.ones_like(theta_grid)/(2*np.pi)
+        
+    Ef_2d = J * D_theta
     
-    d2Psi_domega2 = np.gradient(np.gradient(psi, omega, axis=0), omega, axis=0)
-
-    d2Psi_dtheta2 = (
-        np.roll(psi, -1, axis=1)
-        - 2 * psi
-        + np.roll(psi, 1, axis=1)
-    ) / dtheta**2
-
-    L_Psi = 0.5 * d2Psi_domega2 + (1 / omega[:, None]**2) * d2Psi_dtheta2
-    return L_Psi
-
-
-def compute_snl_raw(n, omega, theta, Tp):
-    psi = compute_psi(n, omega, theta, Tp)
-    L_Psi = laplacian_operator(psi, omega, theta)
-    return L_Psi / omega[:, None]**3
+    # Reescala a energia se um Hs alvo for estipulado (Ondas Oceânicas)
+    if Hs is not None:
+        E_1d = _trapz(Ef_2d, theta, axis=1)
+        m0 = _trapz(E_1d, f)
+        if m0 > 0:
+            Hs_atual = 4.0 * np.sqrt(m0)
+            Ef_2d = Ef_2d * (Hs / Hs_atual)**2
+            
+    return Ef_2d
 
 
-def compute_alpha(omega, theta, n_samples=100):
-    max_val = 0.0
-
-    for _ in range(n_samples):
-        n, Tp = generate_action_spectrum(omega, theta)
-        snl_raw = compute_snl_raw(n, omega, theta, Tp)
-        max_val = max(max_val, np.max(np.abs(snl_raw)))
-
-    return 1.0 / max_val
-
-
-def sanity_checks(n, snl, omega, theta, tol=1e-2):
-    integral = np.trapz(np.trapz(snl, theta, axis=1), omega)
-
-    norm = np.trapz(np.trapz(np.abs(snl), theta, axis=1), omega)
-
-    rel_error = abs(integral) / (norm + 1e-12)
-
-    return rel_error
+def compute_de3_snl(Ef_2d, f, theta, alpha3=2.6e-7):
+    """
+    Calcula o S_nl(f, theta) pelo modelo DE3 (Pushkarev et al. 2004).
+    Implementa a correção numérica de (omega/omega_p)^24 sugerida no plano teórico.
+    """
+    # Usando float64 internamente para evitar estouro nas derivadas
+    f_grid, theta_grid = np.meshgrid(f, theta, indexing='ij')
+    omega_1d = (2.0 * np.pi * f).astype(np.float64)
+    omega_grid = (2.0 * np.pi * f_grid).astype(np.float64)
+    Ef_2d = Ef_2d.astype(np.float64)
+    
+    # 1. Converter Espectro para Densidade de Ação n(ω, θ)
+    n_omega_theta = Ef_2d * g**2 / (4.0 * np.pi * omega_grid**4)
+    
+    # 2. Encontrar omega_p para ancoragem numérica
+    E_1d = _trapz(Ef_2d, theta, axis=1)
+    idx_p = np.argmax(E_1d)
+    omega_p = omega_1d[idx_p] if E_1d[idx_p] > 0 else 1.0
+    
+    # 3. D = <n>²
+    n_mean = _trapz(n_omega_theta, theta, axis=1) / (2.0 * np.pi)
+    D_coeff = n_mean**2
+    D_grid = D_coeff[:, np.newaxis] * np.ones_like(theta_grid)
+    
+    # 4. Termo Estabilizado Psi = (ω / ω_p)^24 * D * n
+    Psi = (omega_grid / omega_p)**24 * D_grid * n_omega_theta
+    
+    # 5. Operador Diferencial em Psi
+    d_Psi_dw = np.gradient(Psi, omega_1d, axis=0)
+    d2_Psi_dw2 = np.gradient(d_Psi_dw, omega_1d, axis=0)
+    
+    d_Psi_dth = np.gradient(Psi, theta, axis=1)
+    d2_Psi_dth2 = np.gradient(d_Psi_dth, theta, axis=1)
+    
+    L_Psi = 0.5 * d2_Psi_dw2 + (1.0 / omega_grid**2) * d2_Psi_dth2
+    
+    # 6. ∂n/∂t = α3 * (ω_p^24 / ω^3) * L[Psi]
+    # A matemática é idêntica à formulação original, mas imune a overflow de float
+    dn_dt = alpha3 * (omega_p**24 / omega_grid**3) * L_Psi
+    
+    # 7. S_nl(f,θ) = ∂E(f,θ)/∂t
+    Snl_f2d = dn_dt * (4.0 * np.pi * omega_grid**4) / g**2
+    
+    return Snl_f2d.astype(np.float32)
