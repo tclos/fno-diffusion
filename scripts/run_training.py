@@ -25,7 +25,7 @@ CONFIG = {
         "hidden_channels": 64,
     },
     "training": {
-        "epochs": 3,
+        "epochs": 64,
         "batch_size": 16,
         "learning_rate": 1e-3,
     },
@@ -171,3 +171,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
