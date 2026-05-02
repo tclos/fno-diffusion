@@ -25,11 +25,15 @@ fno-diffusion/
 │       └── snl_dataset.h5          # Generated dataset
 │
 └── scripts/
-    ├── generate_snl_data.py        # Dataset generation (physics-based)
-    ├── run_training.py             # Main FNO training script
-    ├── inspect_polar_snl.py        # Polar visualization & sanity check
-    ├── train_compare_norm.py       # Comparison: global vs per-sample normalization
-    └── train_compare_loss.py       # Comparison: standard vs peak-weighted L2 loss
+    ├── generate_snl_data.py               # Dataset generation
+    ├── run_training.py                    # Baseline FNO training
+    ├── inspect_polar_snl.py               # Baseline FNO / ground-truth inspection
+    ├── train_compare_norm.py              # Global vs per-sample normalization
+    ├── train_compare_loss.py              # Relative L2 vs peak-weighted L2
+    ├── run_training_factorized_scale.py   # Factorized model training
+    ├── inspect_polar_snl_factorized.py    # Factorized model inspection
+    ├── compare_factorized_scale.py        # Evaluation of a_gt vs a_pred
+    └── compare_factorized_field.py        # Evaluation of normalized field prediction
 ```
 
 ---
@@ -126,8 +130,8 @@ python scripts/run_training.py
 
 Key design decisions in `run_training.py`:
 
-- **Normalization:** each sample is normalized by its own absolute maximum —
-  `Y_norm[i] = Y[i] / (|Y[i]|.max + ε)` — so that low-amplitude samples
+- **Normalization:** each sample is normalized by its own absolute maximum -
+  `Y_norm[i] = Y[i] / (|Y[i]|.max + ε)` - so that low-amplitude samples
   contribute equally to the gradient.
 - **Loss:** peak-weighted relative L2, which assigns quadratic weights proportional
   to the local amplitude of the target field, focusing the gradient on the physically
@@ -177,8 +181,6 @@ python scripts/train_compare_norm.py --epochs 100
 
 Saves both models and a comparative loss curve plot to `results_compare_norm/`.
 
----
-
 ### Loss function comparison
 
 Compares standard relative L2 vs peak-weighted relative L2,
@@ -190,29 +192,109 @@ python scripts/train_compare_loss.py --epochs 100 --alpha 2.0
 
 Saves both models and a comparative plot to `results_compare_loss/`.
 
----
-
-## 📐 Loss Functions
-
-**Relative L2**
-
-$$\mathcal{L} = \frac{1}{N}\sum_{i=1}^{N} \frac{\|pred_i - target_i\|_2}{\|target_i\|_2 + \varepsilon}$$
-
-**Peak-Weighted Relative L2**
-
-$$W_i = \left(\frac{|target_i|}{|target_i|_{\max} + \varepsilon}\right)^\alpha, \quad \alpha=2$$
-
-$$\mathcal{L} = \frac{1}{N}\sum_{i=1}^{N} \frac{\|W_i \cdot (pred_i - target_i)\|_2}{\|W_i \cdot target_i\|_2 + \varepsilon}$$
-
----
-
-## 📁 Output Files Reference
-
 | File | Script | Description |
 |---|---|---|
 | `results_snl/model_best.pth` | `run_training.py` | Best FNO checkpoint |
 | `results_snl/norm_params.json` | `run_training.py` | Normalization parameters |
 | `results_snl/metrics.json` | `run_training.py` | Final training metrics |
 | `results_snl/loss_curves.pdf` | `run_training.py` | Train/val loss curves |
-| `results_compare_norm/ablation_norm.pdf` | `train_compare_norm.py` | Normalization comparison plot |
-| `results_compare_loss/ablation_loss.pdf` | `train_compare_loss.py` | Loss comparison plot |
+| `results_compare_norm/compare_norm.pdf` | `train_compare_norm.py` | Normalization comparison plot |
+| `results_compare_loss/compare_loss.pdf` | `train_compare_loss.py` | Loss comparison plot |
+---
+
+### Factorized Training (Shape + Scale)
+
+#### `run_training_factorized_scale.py`
+
+Trains the **factorized model**, where:
+- an FNO learns the normalized field shape `S_nl(f, θ)`
+- a small MLP (`ScaleHead`) predicts the scalar amplitude `a = max |S_nl|`
+
+Two modes:
+- Full training (both branches)
+```bash
+python scripts/run_training_factorized_scale.py
+```
+
+- Freeze a pre-trained FNO (best Relative L2 model) and train only the scale network
+```bash
+python scripts/run_training_factorized_scale.py \
+    --field-checkpoint results_compare_loss/model_A_rel_l2.pth \
+    --freeze-field
+```
+
+**Outputs (in `results_snl_factorized/`):**
+
+| File | Description |
+|------|------------|
+| `model.pth` | Final checkpoint |
+| `model_best.pth` | Best validation checkpoint |
+| `factorized_params.json` | Parameters used in factorization |
+| `loss_field.pdf` | Loss curve for FNO (shape) |
+| `loss_scale.pdf` | Loss curve for amplitude network |
+| `loss_total.pdf` | Combined loss |
+
+
+### 🔍 Factorized Model Inspection
+
+#### `inspect_polar_snl_factorized.py`
+
+Visual inspection of the **factorized model predictions**.
+
+```bash
+python scripts/inspect_polar_snl_factorized.py \
+    --idx 0 \
+    --model results_snl_factorized/model_best.pth
+```
+
+**Outputs (in `data/snl/`):**
+
+| File | Description |
+|------|------------|
+| `snl_factorized_<idx>.png` | Comparison plot showing ground truth, prediction, error and directional integral |
+
+---
+
+### 📊 Scale Evaluation
+
+#### `compare_factorized_scale.py`
+
+Evaluates the prediction of the **amplitude `a`**.
+
+```bash
+python scripts/compare_factorized_scale.py \
+    --model results_snl_factorized/model_best.pth \
+```
+
+**Outputs (in `results_compare_factorized_scale/`):**
+
+| File | Description |
+|------|------------|
+| `scale_scatter_val.pdf` | Scatter plot `a_gt vs a_pred` (log scale) |
+| `scale_rel_err_hist_val.pdf` | Histogram of relative error |
+| `scale_metrics_val.csv` | Per-sample metrics |
+| `scale_summary_val.json` | Aggregated statistics |
+
+---
+
+### 📊 Field (Shape) Evaluation
+
+#### `compare_factorized_field.py`
+
+Evaluates the prediction of the **normalized field shape**.
+
+```bash
+python scripts/compare_factorized_field.py \
+    --model results_snl_factorized/model_best.pth \
+```
+
+**Outputs (in `results_compare_factorized_field/`):**
+
+| File | Description |
+|------|------------|
+| `field_rel_l2_hist_val.pdf` | Histogram of Relative L2 error |
+| `field_examples_val.pdf` | Visual examples (GT vs Pred vs Error) |
+| `field_metrics_val.csv` | Per-sample metrics |
+| `field_summary_val.json` | Aggregated statistics |
+
+---
